@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------
+   SettleUp design tokens
+   Palette (given): sage #ccd5ae, olive-cream #e9edc9, cream #fefae0,
+   sand #faedcd, clay #d4a373 - warm, earthy, calm. Deliberately avoiding
+   the generic "fintech blue/green" look for something that feels more
+   personal, fitting an app about splitting bills with people you know.
+
+   Type: Fraunces (display serif, formal with some warmth for headings)
+   paired with Inter (body/UI - clean and highly legible for numbers,
+   tables, and financial data at small sizes).
+   --------------------------------------------------------------------- */
+
+@theme {
+  --font-display: 'Fraunces', ui-serif, Georgia, serif;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  /* Base palette, named after the source material rather than usage,
+     so they read clearly wherever they're reused. */
+  --color-cream: #fefae0;
+  --color-sand: #faedcd;
+  --color-olive: #e9edc9;
+  --color-sage: #ccd5ae;
+  --color-clay: #d4a373;
+
+  /* Darker working shades of clay/sage for text-on-light contrast and
+     hover states, since the base palette skews light. */
+  --color-clay-dark: #b5824f;
+  --color-sage-dark: #8fa06a;
+
+  /* Semantic colors for the two things this app fundamentally shows:
+     "you're owed" (credit) and "you owe" (debt). Kept inside the same
+     earthy family rather than reaching for stock red/green. */
+  --color-credit: #7c9463;
+  --color-credit-bg: #e9edc9;
+  --color-debt: #bc6c25;
+  --color-debt-bg: #faedcd;
+
+  /* Neutral ink tones for body text - not pure black, keeps the warm feel */
+  --color-ink: #3a3226;
+  --color-ink-muted: #6b6153;
+}
+
+@layer base {
+  body {
+    @apply bg-cream text-ink font-sans antialiased;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-clay-dark);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
