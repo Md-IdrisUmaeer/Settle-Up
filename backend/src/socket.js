@@ -21,9 +21,23 @@ const Group = require('./models/Group');
 let io = null;
 
 function initSocket(httpServer) {
+  // Same reasoning as backend/src/app.js: Vercel serves your frontend from
+  // several URLs at once, so allow a comma-separated CLIENT_ORIGIN list plus
+  // any *.vercel.app origin as a fallback for preview/branch deployments.
+  const allowedOrigins = (process.env.CLIENT_ORIGIN || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
   io = new Server(httpServer, {
     cors: {
-      origin: process.env.CLIENT_ORIGIN || '*',
+      origin(origin, callback) {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.length === 0) return callback(null, true);
+        if (allowedOrigins.includes(origin)) return callback(null, true);
+        if (/\.vercel\.app$/.test(new URL(origin).hostname)) return callback(null, true);
+        return callback(new Error(`Origin ${origin} not allowed by CORS.`));
+      },
       methods: ['GET', 'POST'],
     },
   });
