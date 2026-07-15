@@ -23,6 +23,13 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ message: 'User no longer exists.' });
     }
 
+    // Deleted accounts are soft-deleted (see auth.controller.js deleteMyAccount),
+    // so an existing token would otherwise still verify successfully. Reject
+    // it explicitly rather than relying on login alone to enforce this.
+    if (user.isDeleted) {
+      return res.status(401).json({ message: 'This account no longer exists.' });
+    }
+
     req.user = user;
     next();
   } catch (err) {

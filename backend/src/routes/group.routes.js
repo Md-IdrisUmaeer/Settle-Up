@@ -7,6 +7,10 @@ const {
   previewInvite,
   joinByInviteCode,
   regenerateInviteCode,
+  removeMember,
+  leaveGroup,
+  transferOwnership,
+  deleteGroup,
 } = require('../controllers/group.controller');
 const { getBalances, getSimplified } = require('../controllers/balance.controller');
 const { requireAuth } = require('../middleware/auth.middleware');
@@ -29,6 +33,11 @@ router.post('/join/:inviteCode', joinByInviteCode);
 router.get('/:groupId', requireGroupMember, getGroup);
 router.post('/:groupId/invite/email', requireGroupMember, inviteByEmail);
 router.post('/:groupId/invite/regenerate', requireGroupMember, regenerateInviteCode);
+
+router.post('/:groupId/leave', requireGroupMember, leaveGroup);
+router.delete('/:groupId/members/:userId', requireGroupMember, removeMember);
+router.post('/:groupId/transfer-ownership', requireGroupMember, transferOwnership);
+router.delete('/:groupId', requireGroupMember, deleteGroup);
 
 router.get('/:groupId/balances', requireGroupMember, getBalances);
 router.get('/:groupId/balances/simplify', requireGroupMember, getSimplified);

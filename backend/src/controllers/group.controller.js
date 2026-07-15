@@ -1,7 +1,11 @@
 const crypto = require('crypto');
 const Group = require('../models/Group');
 const User = require('../models/User');
+const Expense = require('../models/Expense');
+const Settlement = require('../models/Settlement');
 const { isNonEmptyString, isValidEmail } = require('../utils/validate');
+const { getUserBalanceInGroup, getGroupBalances } = require('../services/balance.service');
+const { emitToGroup } = require('../socket');
 
 /** POST /api/groups - create a group, creator auto-joins as first member */
 async function createGroup(req, res) {
@@ -150,6 +154,157 @@ async function regenerateInviteCode(req, res) {
   }
 }
 
+/**
+ * DELETE /api/groups/:groupId/members/:userId - owner removes another
+ * member. The owner can't remove themself this way (use leaveGroup, which
+ * requires transferring ownership first, or deleteGroup). The target must
+ * be settled up in this group before they can be removed, so removing
+ * someone can never silently erase a debt.
+ */
+async function removeMember(req, res) {
+  try {
+    const { userId } = req.params;
+
+    if (req.group.createdBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only the group owner can remove members.' });
+    }
+    if (userId === req.user._id.toString()) {
+      return res.status(400).json({
+        message: 'The owner can\'t remove themself. Transfer ownership or delete the group instead.',
+      });
+    }
+
+    const isMember = req.group.members.some((m) => m.toString() === userId);
+    if (!isMember) {
+      return res.status(404).json({ message: 'That user is not a member of this group.' });
+    }
+
+    const balance = await getUserBalanceInGroup(req.group._id.toString(), userId);
+    if (Math.abs(balance) > 0.01) {
+      return res.status(409).json({
+        message: 'This member has an outstanding balance in this group and can\'t be removed until they settle up.',
+      });
+    }
+
+    req.group.members = req.group.members.filter((m) => m.toString() !== userId);
+    await req.group.save();
+
+    emitToGroup(req.group._id.toString(), 'group:memberRemoved', { userId });
+
+    return res.status(200).json({ group: req.group });
+  } catch (err) {
+    return res.status(500).json({ message: 'Failed to remove member.', error: err.message });
+  }
+}
+
+/**
+ * POST /api/groups/:groupId/leave - a member removes themself.
+ * - Owner leaving a group that still has other members must transfer
+ *   ownership first (prevents an ownerless group).
+ * - Owner leaving a group where they're the only member deletes the whole
+ *   group (trivially balance-free, since there's no one to owe).
+ * - Anyone else must be settled up in this group first.
+ */
+async function leaveGroup(req, res) {
+  try {
+    const isOwner = req.group.createdBy.toString() === req.user._id.toString();
+
+    if (isOwner) {
+      if (req.group.members.length > 1) {
+        return res.status(409).json({
+          message: 'Transfer ownership to another member before leaving this group.',
+        });
+      }
+      await Expense.deleteMany({ group: req.group._id });
+      await Settlement.deleteMany({ group: req.group._id });
+      await req.group.deleteOne();
+      return res.status(200).json({ message: 'Group deleted (you were the only member).' });
+    }
+
+    const balance = await getUserBalanceInGroup(req.group._id.toString(), req.user._id.toString());
+    if (Math.abs(balance) > 0.01) {
+      return res.status(409).json({
+        message: 'Settle up before leaving this group.',
+      });
+    }
+
+    req.group.members = req.group.members.filter(
+      (m) => m.toString() !== req.user._id.toString()
+    );
+    await req.group.save();
+
+    emitToGroup(req.group._id.toString(), 'group:memberLeft', { userId: req.user._id.toString() });
+
+    return res.status(200).json({ message: 'You left the group.' });
+  } catch (err) {
+    return res.status(500).json({ message: 'Failed to leave group.', error: err.message });
+  }
+}
+
+/**
+ * POST /api/groups/:groupId/transfer-ownership - hand off the owner role
+ * to another existing member. Owner-only.
+ */
+async function transferOwnership(req, res) {
+  try {
+    if (req.group.createdBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only the group owner can transfer ownership.' });
+    }
+
+    const { newOwnerId } = req.body;
+    if (!isNonEmptyString(newOwnerId)) {
+      return res.status(400).json({ message: 'newOwnerId is required.' });
+    }
+
+    const isMember = req.group.members.some((m) => m.toString() === newOwnerId);
+    if (!isMember) {
+      return res.status(400).json({ message: 'The new owner must already be a member of this group.' });
+    }
+
+    req.group.createdBy = newOwnerId;
+    await req.group.save();
+
+    emitToGroup(req.group._id.toString(), 'group:ownerChanged', { newOwnerId });
+
+    return res.status(200).json({ group: req.group });
+  } catch (err) {
+    return res.status(500).json({ message: 'Failed to transfer ownership.', error: err.message });
+  }
+}
+
+/**
+ * DELETE /api/groups/:groupId - permanently delete a group and its
+ * expense/settlement history. Owner-only, and only once everyone is
+ * settled up (no unresolved balances get silently wiped).
+ */
+async function deleteGroup(req, res) {
+  try {
+    if (req.group.createdBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only the group owner can delete this group.' });
+    }
+
+    const balances = await getGroupBalances(req.group._id.toString());
+    if (balances.length > 0) {
+      return res.status(409).json({
+        message: 'Everyone must be settled up before this group can be deleted.',
+        balances,
+      });
+    }
+
+    const groupId = req.group._id.toString();
+
+    await Expense.deleteMany({ group: req.group._id });
+    await Settlement.deleteMany({ group: req.group._id });
+    await req.group.deleteOne();
+
+    emitToGroup(groupId, 'group:deleted', { groupId });
+
+    return res.status(200).json({ message: 'Group deleted.' });
+  } catch (err) {
+    return res.status(500).json({ message: 'Failed to delete group.', error: err.message });
+  }
+}
+
 module.exports = {
   createGroup,
   listMyGroups,
@@ -158,4 +313,8 @@ module.exports = {
   previewInvite,
   joinByInviteCode,
   regenerateInviteCode,
+  removeMember,
+  leaveGroup,
+  transferOwnership,
+  deleteGroup,
 };

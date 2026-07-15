@@ -1,5 +1,6 @@
 const Expense = require('../models/Expense');
 const Settlement = require('../models/Settlement');
+const Group = require('../models/Group');
 const { simplifyDebts, computeNetBalances, EPSILON } = require('./debtSimplifier');
 const { emitToGroup } = require('../socket');
 
@@ -92,4 +93,47 @@ async function broadcastBalances(groupId) {
   }
 }
 
-module.exports = { getGroupBalances, getSimplifiedDebts, broadcastBalances };
+/**
+ * A single member's net balance within one group. 0 if they have no
+ * expenses/settlements there, or are already fully settled up.
+ * Used to gate "leave group" / "remove member" / "delete group".
+ *
+ * @param {string} groupId
+ * @param {string} userId
+ * @returns {Promise<number>}
+ */
+async function getUserBalanceInGroup(groupId, userId) {
+  const balances = await getGroupBalances(groupId);
+  const entry = balances.find((b) => b.userId === userId.toString());
+  return entry ? entry.amount : 0;
+}
+
+/**
+ * Every group a user belongs to where they still have a nonzero balance.
+ * Used to gate account deletion - a user shouldn't be able to delete their
+ * account while they owe money or are owed money in any group.
+ *
+ * @param {string} userId
+ * @returns {Promise<Array<{ groupId: string, groupName: string, amount: number }>>}
+ */
+async function getUserOutstandingGroups(userId) {
+  const groups = await Group.find({ members: userId }).select('name');
+  const results = [];
+
+  for (const group of groups) {
+    const amount = await getUserBalanceInGroup(group._id.toString(), userId);
+    if (Math.abs(amount) > EPSILON) {
+      results.push({ groupId: group._id.toString(), groupName: group.name, amount });
+    }
+  }
+
+  return results;
+}
+
+module.exports = {
+  getGroupBalances,
+  getSimplifiedDebts,
+  broadcastBalances,
+  getUserBalanceInGroup,
+  getUserOutstandingGroups,
+};

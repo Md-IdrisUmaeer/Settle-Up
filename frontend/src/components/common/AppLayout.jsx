@@ -17,7 +17,9 @@ export default function AppLayout({ children, wide = false }) {
             SettleUp
           </Link>
           <div className="flex items-center gap-4">
-            <span className="text-sm text-ink-muted">{user?.name}</span>
+            <Link to="/settings" className="text-sm text-ink-muted hover:underline">
+              {user?.name}
+            </Link>
             <Button variant="secondary" onClick={logout}>
               Log out
             </Button>

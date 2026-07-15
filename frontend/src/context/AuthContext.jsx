@@ -59,7 +59,19 @@ export function AuthProvider({ children }) {
     getSocket().disconnect();
   }
 
-  const value = { user, loading, error, login, signup, logout };
+  /**
+   * Deletes the current user's account (server-side soft delete) and clears
+   * the local session. Throws on failure (e.g. outstanding balance or
+   * un-transferred group ownership) so the caller can show the server's
+   * message - it does NOT swallow the error like login/signup do, since the
+   * caller needs the specific reason to display it.
+   */
+  async function deleteAccount() {
+    await authApi.deleteAccount();
+    logout();
+  }
+
+  const value = { user, loading, error, login, signup, logout, deleteAccount };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

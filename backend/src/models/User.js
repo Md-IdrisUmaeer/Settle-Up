@@ -22,6 +22,18 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    // Account deletion is a soft delete: past expenses/settlements keep
+    // referencing this user's _id (so group history stays intact), but the
+    // account is anonymized and can no longer log in. See auth.controller.js
+    // deleteMyAccount().
+    isDeleted: {
+      type: Boolean,
+      default: false,
+    },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true } // gives us createdAt / updatedAt automatically
 );

@@ -7,6 +7,7 @@ import GroupList from './pages/GroupList';
 import GroupDetail from './pages/GroupDetail';
 import AddExpense from './pages/AddExpense';
 import InvitePage from './pages/InvitePage';
+import Settings from './pages/Settings';
 
 export default function App() {
   return (
@@ -38,6 +39,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <AddExpense />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <Settings />
               </ProtectedRoute>
             }
           />

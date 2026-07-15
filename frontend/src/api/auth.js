@@ -14,3 +14,9 @@ export async function getMe() {
   const { data } = await client.get('/auth/me');
   return data.user;
 }
+
+/** Permanently deletes (anonymizes) the current user's account. */
+export async function deleteAccount() {
+  const { data } = await client.delete('/auth/me');
+  return data;
+}

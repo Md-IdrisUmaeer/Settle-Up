@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import * as groupsApi from '../api/groups';
 import * as balancesApi from '../api/balances';
 import { useAuth } from '../context/AuthContext';
@@ -16,6 +16,7 @@ import { isValidEmail } from '../utils/validation';
 export default function GroupDetail() {
   const { groupId } = useParams();
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const [group, setGroup] = useState(null);
   const [balances, setBalances] = useState(null);
@@ -28,6 +29,14 @@ export default function GroupDetail() {
   const [inviting, setInviting] = useState(false);
   const [inviteMessage, setInviteMessage] = useState(null);
   const [linkCopied, setLinkCopied] = useState(false);
+
+  // Member/ownership management (owner-only actions + leave-group for anyone)
+  const [manageMessage, setManageMessage] = useState(null); // { type, text }
+  const [removingId, setRemovingId] = useState(null);
+  const [leaving, setLeaving] = useState(false);
+  const [deletingGroup, setDeletingGroup] = useState(false);
+  const [transferTarget, setTransferTarget] = useState('');
+  const [transferring, setTransferring] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -69,18 +78,47 @@ export default function GroupDetail() {
       setLive(false);
     }
 
+    // Someone else deleting the group, removing us, or the owner changing
+    // should all be reflected immediately for anyone else viewing this page,
+    // not just whoever performed the action.
+    function handleGroupDeleted() {
+      navigate('/groups', { replace: true });
+    }
+    function handleMemberRemoved({ userId }) {
+      if (userId === user._id) {
+        navigate('/groups', { replace: true });
+        return;
+      }
+      loadAll();
+    }
+    function handleMemberLeft({ userId }) {
+      if (userId === user._id) return; // we already navigated away ourselves
+      loadAll();
+    }
+    function handleOwnerChanged() {
+      loadAll();
+    }
+
     socket.on('balances:update', handleUpdate);
+    socket.on('group:deleted', handleGroupDeleted);
+    socket.on('group:memberRemoved', handleMemberRemoved);
+    socket.on('group:memberLeft', handleMemberLeft);
+    socket.on('group:ownerChanged', handleOwnerChanged);
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     setLive(socket.connected);
 
     return () => {
       socket.off('balances:update', handleUpdate);
+      socket.off('group:deleted', handleGroupDeleted);
+      socket.off('group:memberRemoved', handleMemberRemoved);
+      socket.off('group:memberLeft', handleMemberLeft);
+      socket.off('group:ownerChanged', handleOwnerChanged);
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       leaveGroupRoom(groupId);
     };
-  }, [groupId]);
+  }, [groupId, user._id, navigate, loadAll]);
 
   async function handleInvite(e) {
     e.preventDefault();
@@ -120,6 +158,89 @@ export default function GroupDetail() {
       setTimeout(() => setLinkCopied(false), 2000);
     } catch {
       setInviteMessage({ type: 'error', text: 'Could not copy the link — copy it manually.' });
+    }
+  }
+
+  const isOwner = group?.createdBy && (group.createdBy._id || group.createdBy) === user._id;
+
+  async function handleRemoveMember(member) {
+    if (!window.confirm(`Remove ${member.name} from this group?`)) return;
+
+    setRemovingId(member._id);
+    setManageMessage(null);
+    try {
+      const updated = await groupsApi.removeMember(groupId, member._id);
+      setGroup(updated);
+      setManageMessage({ type: 'success', text: `${member.name} was removed.` });
+    } catch (err) {
+      setManageMessage({
+        type: 'error',
+        text: err.response?.data?.message || 'Could not remove that member.',
+      });
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
+  async function handleLeaveGroup() {
+    if (!window.confirm('Leave this group?')) return;
+
+    setLeaving(true);
+    setManageMessage(null);
+    try {
+      await groupsApi.leaveGroup(groupId);
+      navigate('/groups', { replace: true });
+    } catch (err) {
+      setManageMessage({
+        type: 'error',
+        text: err.response?.data?.message || 'Could not leave this group.',
+      });
+      setLeaving(false);
+    }
+  }
+
+  async function handleTransferOwnership(e) {
+    e.preventDefault();
+    if (!transferTarget) return;
+    const target = group.members.find((m) => m._id === transferTarget);
+    if (!window.confirm(`Make ${target?.name || 'this member'} the new owner?`)) return;
+
+    setTransferring(true);
+    setManageMessage(null);
+    try {
+      const updated = await groupsApi.transferOwnership(groupId, transferTarget);
+      setGroup(updated);
+      setTransferTarget('');
+      setManageMessage({ type: 'success', text: 'Ownership transferred.' });
+    } catch (err) {
+      setManageMessage({
+        type: 'error',
+        text: err.response?.data?.message || 'Could not transfer ownership.',
+      });
+    } finally {
+      setTransferring(false);
+    }
+  }
+
+  async function handleDeleteGroup() {
+    if (
+      !window.confirm(
+        'Permanently delete this group and all its expense/settlement history? This cannot be undone.'
+      )
+    )
+      return;
+
+    setDeletingGroup(true);
+    setManageMessage(null);
+    try {
+      await groupsApi.deleteGroup(groupId);
+      navigate('/groups', { replace: true });
+    } catch (err) {
+      setManageMessage({
+        type: 'error',
+        text: err.response?.data?.message || 'Could not delete this group.',
+      });
+      setDeletingGroup(false);
     }
   }
 
@@ -218,8 +339,25 @@ export default function GroupDetail() {
               <ul className="divide-y divide-sand">
                 {group.members.map((m) => (
                   <li key={m._id} className="flex items-center justify-between py-2 text-sm">
-                    <span className="text-ink">{m._id === user._id ? 'You' : m.name}</span>
-                    <span className="text-ink-muted">{m.email}</span>
+                    <span className="text-ink">
+                      {m._id === user._id ? 'You' : m.name}
+                      {(group.createdBy._id || group.createdBy) === m._id && (
+                        <span className="ml-1.5 text-xs text-ink-muted">(owner)</span>
+                      )}
+                    </span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-ink-muted">{m.email}</span>
+                      {isOwner && m._id !== user._id && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveMember(m)}
+                          disabled={removingId === m._id}
+                          className="text-xs font-medium text-debt hover:underline disabled:opacity-50"
+                        >
+                          {removingId === m._id ? 'Removing…' : 'Remove'}
+                        </button>
+                      )}
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -275,6 +413,87 @@ export default function GroupDetail() {
                   {inviteMessage.text}
                 </p>
               )}
+            </Card>
+          </section>
+
+          {/* Manage group: transfer ownership / delete (owner), leave (anyone) */}
+          <section>
+            <h2 className="font-display text-lg font-semibold text-ink">Manage group</h2>
+            <Card className="mt-3">
+              {manageMessage && (
+                <p
+                  className={`mb-4 text-sm ${
+                    manageMessage.type === 'error' ? 'text-debt' : 'text-credit'
+                  }`}
+                >
+                  {manageMessage.text}
+                </p>
+              )}
+
+              {isOwner && group.members.length > 1 && (
+                <form onSubmit={handleTransferOwnership} className="flex items-end gap-3">
+                  <div className="flex-1">
+                    <label className="mb-1.5 block text-sm font-medium text-ink">
+                      Transfer ownership to
+                    </label>
+                    <select
+                      value={transferTarget}
+                      onChange={(e) => setTransferTarget(e.target.value)}
+                      className="w-full rounded-md border border-sage bg-white px-3.5 py-2.5 text-sm text-ink focus:border-clay-dark focus:outline-none"
+                    >
+                      <option value="">Select a member…</option>
+                      {group.members
+                        .filter((m) => m._id !== user._id)
+                        .map((m) => (
+                          <option key={m._id} value={m._id}>
+                            {m.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <Button
+                    type="submit"
+                    variant="secondary"
+                    disabled={!transferTarget}
+                    loading={transferring}
+                  >
+                    Transfer
+                  </Button>
+                </form>
+              )}
+
+              <div
+                className={`flex items-center justify-between ${
+                  isOwner && group.members.length > 1 ? 'mt-4 border-t border-sand pt-4' : ''
+                }`}
+              >
+                <div>
+                  <p className="text-sm font-medium text-ink">
+                    {isOwner ? 'Delete this group' : 'Leave this group'}
+                  </p>
+                  <p className="text-xs text-ink-muted">
+                    {isOwner
+                      ? 'Everyone must be settled up first. This cannot be undone.'
+                      : 'You must be settled up in this group first.'}
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  {!isOwner && (
+                    <Button variant="secondary" onClick={handleLeaveGroup} loading={leaving}>
+                      Leave group
+                    </Button>
+                  )}
+                  {isOwner && (
+                    <Button
+                      className="!bg-debt hover:!bg-debt/90"
+                      onClick={handleDeleteGroup}
+                      loading={deletingGroup}
+                    >
+                      Delete group
+                    </Button>
+                  )}
+                </div>
+              </div>
             </Card>
           </section>
         </div>
