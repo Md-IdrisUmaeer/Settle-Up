@@ -22,14 +22,21 @@ async function createSettlement(req, res) {
       return res.status(400).json({ message: 'Both from and to must be group members.' });
     }
 
+    const requestedStatus = status === 'completed' ? 'completed' : 'pending';
+    const userId = req.user._id.toString();
+    const isInvolved = userId === from || userId === to;
+    if (requestedStatus === 'completed' && !isInvolved) {
+      return res.status(403).json({
+        message: 'Only the payer or receiver can mark a settlement as completed.',
+      });
+    }
+
     const settlement = await Settlement.create({
       group: req.group._id,
       from,
       to,
       amount,
-      // Defaults to 'pending' unless the caller explicitly marks it completed
-      // (e.g. a "mark as paid" checkbox at creation time).
-      status: status === 'completed' ? 'completed' : 'pending',
+      status: requestedStatus,
     });
 
     if (settlement.status === 'completed') {
@@ -74,15 +81,19 @@ async function updateSettlementStatus(req, res) {
       return res.status(400).json({ message: "status must be 'pending' or 'completed'." });
     }
 
-    const settlement = await Settlement.findOneAndUpdate(
-      { _id: settlementId, group: req.group._id },
-      { status },
-      { new: true }
-    );
-
+    const settlement = await Settlement.findOne({ _id: settlementId, group: req.group._id });
     if (!settlement) {
       return res.status(404).json({ message: 'Settlement not found in this group.' });
     }
+    const userId = req.user._id.toString();
+    if (settlement.from.toString() !== userId && settlement.to.toString() !== userId) {
+      return res.status(403).json({
+        message: 'Only the payer or receiver can update this settlement.',
+      });
+    }
+
+    settlement.status = status;
+    await settlement.save();
 
     broadcastBalances(req.group._id.toString());
 
@@ -100,14 +111,18 @@ async function deleteSettlement(req, res) {
       return res.status(400).json({ message: 'Invalid settlement id.' });
     }
 
-    const settlement = await Settlement.findOneAndDelete({
-      _id: settlementId,
-      group: req.group._id,
-    });
-
+    const settlement = await Settlement.findOne({ _id: settlementId, group: req.group._id });
     if (!settlement) {
       return res.status(404).json({ message: 'Settlement not found in this group.' });
     }
+    const userId = req.user._id.toString();
+    if (settlement.from.toString() !== userId && settlement.to.toString() !== userId) {
+      return res.status(403).json({
+        message: 'Only the payer or receiver can delete this settlement.',
+      });
+    }
+
+    await settlement.deleteOne();
 
     if (settlement.status === 'completed') {
       broadcastBalances(req.group._id.toString());

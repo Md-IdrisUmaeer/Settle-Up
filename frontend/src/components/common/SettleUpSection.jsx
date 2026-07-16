@@ -123,11 +123,12 @@ export default function SettleUpSection({ groupId, members, currentUserId, trans
 
     setManualSubmitting(true);
     try {
+      const isInvolved = manualForm.from === currentUserId || manualForm.to === currentUserId;
       await settlementsApi.createSettlement(groupId, {
         from: manualForm.from,
         to: manualForm.to,
         amount,
-        status: 'completed',
+        status: isInvolved ? 'completed' : 'pending',
       });
       setManualForm({ from: '', to: '', amount: '' });
       setManualErrors({});
@@ -221,6 +222,7 @@ export default function SettleUpSection({ groupId, members, currentUserId, trans
         )}
         {transactions?.map((t, i) => {
           const key = `suggestion-${i}`;
+          const isInvolved = t.from === currentUserId || t.to === currentUserId;
           return (
             <Card key={key} className="flex items-center justify-between py-3">
               <p className="text-sm text-ink">
@@ -229,13 +231,15 @@ export default function SettleUpSection({ groupId, members, currentUserId, trans
               </p>
               <div className="flex items-center gap-3">
                 <p className="font-medium text-clay-dark">₹{t.amount.toFixed(2)}</p>
-                <Button
-                  variant="secondary"
-                  loading={busyKey === key}
-                  onClick={() => markSuggestionPaid(t, key)}
-                >
-                  Mark as paid
-                </Button>
+                {isInvolved && (
+                  <Button
+                    variant="secondary"
+                    loading={busyKey === key}
+                    onClick={() => markSuggestionPaid(t, key)}
+                  >
+                    Mark as paid
+                  </Button>
+                )}
               </div>
             </Card>
           );
@@ -254,47 +258,51 @@ export default function SettleUpSection({ groupId, members, currentUserId, trans
         <div className="mt-6">
           <p className="mb-2 text-sm font-medium text-ink-muted">History</p>
           <div className="space-y-2">
-            {settlements.map((s) => (
-              <Card key={s._id} className="flex items-center justify-between py-3">
-                <div>
-                  <p className="text-sm text-ink">
-                    <span className="font-medium">
-                      {s.from._id === currentUserId ? 'You' : s.from.name}
-                    </span>{' '}
-                    paid{' '}
-                    <span className="font-medium">
-                      {s.to._id === currentUserId ? 'You' : s.to.name}
-                    </span>{' '}
-                    ₹{s.amount.toFixed(2)}
-                  </p>
-                  <span
-                    className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                      s.status === 'completed'
+            {settlements.map((s) => {
+              const isInvolved = s.from._id === currentUserId || s.to._id === currentUserId;
+              return (
+                <Card key={s._id} className="flex items-center justify-between py-3">
+                  <div>
+                    <p className="text-sm text-ink">
+                      <span className="font-medium">
+                        {s.from._id === currentUserId ? 'You' : s.from.name}
+                      </span>{' '}
+                      paid{' '}
+                      <span className="font-medium">
+                        {s.to._id === currentUserId ? 'You' : s.to.name}
+                      </span>{' '}
+                      ₹{s.amount.toFixed(2)}
+                    </p>
+                    <span
+                      className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${s.status === 'completed'
                         ? 'bg-credit-bg text-credit'
                         : 'bg-debt-bg text-debt'
-                    }`}
-                  >
-                    {s.status}
-                  </span>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="secondary"
-                    loading={busyKey === s._id}
-                    onClick={() => toggleStatus(s)}
-                  >
-                    {s.status === 'completed' ? 'Mark pending' : 'Mark completed'}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    loading={busyKey === s._id}
-                    onClick={() => removeSettlement(s)}
-                  >
-                    Delete
-                  </Button>
-                </div>
-              </Card>
-            ))}
+                        }`}
+                    >
+                      {s.status}
+                    </span>
+                  </div>
+                  {isInvolved && (
+                    <div className="flex gap-2">
+                      <Button
+                        variant="secondary"
+                        loading={busyKey === s._id}
+                        onClick={() => toggleStatus(s)}
+                      >
+                        {s.status === 'completed' ? 'Mark pending' : 'Mark completed'}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        loading={busyKey === s._id}
+                        onClick={() => removeSettlement(s)}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
           </div>
         </div>
       )}
